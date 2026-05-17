@@ -1,150 +1,118 @@
 'use client';
+import { useGLTF } from '@react-three/drei';
+import { useEffect, useMemo } from 'react';
+import * as THREE from 'three';
 import { useBikeStore } from '@/store/bikeStore';
-import { BikeFrame } from './parts/Frame';
-import { Fork } from './parts/Fork';
-import { Wheel } from './parts/Wheel';
-import { Drivetrain } from './parts/Drivetrain';
-import { Cockpit } from './parts/Cockpit';
 
-function getColor(part: { id: string; colors: { hex: string }[] } | null, selectedColors: Record<string, string>, fallback: string): string {
+useGLTF.preload('/models/bike.glb');
+
+function getColor(
+  part: { id: string; colors: { hex: string }[] } | null,
+  selectedColors: Record<string, string>,
+  fallback: string
+): string {
   if (!part) return fallback;
   return selectedColors[part.id] ?? part.colors[0]?.hex ?? fallback;
 }
 
+// Maps GLTF material names → which configurator color to apply
+const MAT_TO_CONFIG = {
+  Rahmen:           'frame',
+  Carbon:           'frame',
+  FelgeInnen:       'rim',
+  FelgenBefestigung:'rim',
+  FelgenStab:       'spokes',
+  Reifen:           'tire',
+  Reifen_innen:     'tire',
+  Sattel:           'saddle',
+  Pedale:           'pedals',
+  chain:            'chain',
+  Griffe:           'grips',
+  GriffSeiten:      'grips',
+  GummiDunkel:      'grips',
+  Bremsscheiben:    'rotors',
+  Bremse:           'brakes',
+  BremsHebel:       'brakes',
+  Schrauben:        'hardware',
+  MetalLenker:      'handlebar',
+  Getriebe:         'cassette',
+  RotesTeil:        'hub',
+} as const;
+
 export function BikeModel() {
+  const { scene } = useGLTF('/models/bike.glb') as { scene: THREE.Group };
   const { config, selectedColors, chainLinks } = useBikeStore();
 
-  const frameColor = getColor(config.frame, selectedColors, '#1a1a1a');
-  const forkColor = getColor(config.fork, selectedColors, '#D4AF37');
-  const rimColor = getColor(config.rimFront, selectedColors, '#111');
-  const rimRearColor = getColor(config.rimRear, selectedColors, '#111');
-  const hubColor = getColor(config.hubFront, selectedColors, '#cc3300');
-  const hubRearColor = getColor(config.hubRear, selectedColors, '#cc3300');
-  const spokeColor = getColor(config.spokes, selectedColors, '#c0c0c0');
-  const crankColor = getColor(config.crankset, selectedColors, '#111');
-  const cassetteColor = getColor(config.cassette, selectedColors, '#888');
-  const barColor = getColor(config.handlebar, selectedColors, '#111');
-  const stemColor = getColor(config.stem, selectedColors, '#333');
-  const gripColor = getColor(config.grips, selectedColors, '#222');
-  const saddleColor = getColor(config.saddle, selectedColors, '#111');
-  const pedalColor = getColor(config.pedals, selectedColors, '#111');
-  const rotorColor = getColor(config.brakeRotor, selectedColors, '#c0c0c0');
-  const dropperColor = getColor(config.dropper, selectedColors, '#222');
+  const { clone, matMap } = useMemo(() => {
+    const c = scene.clone(true);
+    const matMap = new Map<string, THREE.MeshStandardMaterial>();
 
-  return (
-    <group>
-      <BikeFrame color={frameColor} />
-      <Fork color={forkColor} />
+    c.traverse(child => {
+      if (!(child instanceof THREE.Mesh)) return;
 
-      {/* Rear wheel */}
-      <Wheel
-        position={[-0.56, 0.36, 0]}
-        rimColor={rimRearColor}
-        hubColor={hubRearColor}
-        spokeColor={spokeColor}
-        radius={0.355}
-        tireWidth={0.063}
-        spokeCount={32}
-      />
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      const cloned = mats.map(m => {
+        const cm = (m as THREE.MeshStandardMaterial).clone();
+        if (cm.name && !matMap.has(cm.name)) matMap.set(cm.name, cm);
+        return cm;
+      });
+      child.material = Array.isArray(child.material) ? cloned : cloned[0];
+      child.castShadow = true;
+      child.receiveShadow = true;
+    });
 
-      {/* Front wheel */}
-      <Wheel
-        position={[0.578, 0.36, 0]}
-        rimColor={rimColor}
-        hubColor={hubColor}
-        spokeColor={spokeColor}
-        radius={0.355}
-        tireWidth={0.063}
-        spokeCount={28}
-      />
+    // Auto-scale: target wheelbase ~1.15 scene units
+    c.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(c);
+    const size = box.getSize(new THREE.Vector3());
+    const longestAxis = Math.max(size.x, size.y, size.z);
+    const scale = 1.15 / longestAxis;
+    const center = box.getCenter(new THREE.Vector3());
+    c.scale.setScalar(scale);
+    c.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
 
-      <Drivetrain
-        crankColor={crankColor}
-        chainLinks={chainLinks}
-        cassetteColor={cassetteColor}
-      />
+    return { clone: c, matMap };
+  }, [scene]);
 
-      <Cockpit
-        barColor={barColor}
-        stemColor={stemColor}
-        gripColor={gripColor}
-      />
+  useEffect(() => {
+    const frameColor  = getColor(config.frame,       selectedColors, '#1a1a1a');
+    const rimColor    = getColor(config.rimFront,     selectedColors, '#111111');
+    const spokeColor  = getColor(config.spokes,       selectedColors, '#c0c0c0');
+    const saddleColor = getColor(config.saddle,       selectedColors, '#111111');
+    const pedalColor  = getColor(config.pedals,       selectedColors, '#222222');
+    const chainColor  = chainLinks[0]?.color ?? '#888888';
+    const gripColor   = getColor(config.grips,        selectedColors, '#222222');
+    const rotorColor  = getColor(config.brakeRotor,   selectedColors, '#c0c0c0');
+    const barColor    = getColor(config.handlebar,    selectedColors, '#111111');
+    const hardwareColor = getColor(config.headCapAndBolts, selectedColors, '#888888');
+    const cassetteColor = getColor(config.cassette,   selectedColors, '#555555');
+    const hubColor    = getColor(config.hubFront,     selectedColors, '#cc3300');
 
-      {/* Dropper post */}
-      <mesh position={[-0.04, 0.70, 0]}>
-        <cylinderGeometry args={[0.017, 0.017, 0.32, 12]} />
-        <meshStandardMaterial color={dropperColor} roughness={0.25} metalness={0.75} />
-      </mesh>
-      {/* Dropper collar */}
-      <mesh position={[-0.04, 0.84, 0]}>
-        <cylinderGeometry args={[0.023, 0.023, 0.018, 12]} />
-        <meshStandardMaterial color={dropperColor} roughness={0.2} metalness={0.8} />
-      </mesh>
+    const colorMap: Record<string, string> = {
+      frame:    frameColor,
+      rim:      rimColor,
+      spokes:   spokeColor,
+      tire:     '#0d0d0d',
+      saddle:   saddleColor,
+      pedals:   pedalColor,
+      chain:    chainColor,
+      grips:    gripColor,
+      rotors:   rotorColor,
+      brakes:   '#1a1a1a',
+      hardware: hardwareColor,
+      handlebar: barColor,
+      cassette: cassetteColor,
+      hub:      hubColor,
+    };
 
-      {/* Saddle */}
-      <group position={[-0.04, 0.885, 0]} rotation={[0.06, 0, 0]}>
-        <mesh>
-          <capsuleGeometry args={[0.032, 0.195, 4, 14]} />
-          <meshStandardMaterial color={saddleColor} roughness={0.75} metalness={0.05} />
-        </mesh>
-        {/* Saddle rails */}
-        {[-0.025, 0.025].map((z, i) => (
-          <mesh key={i} position={[0, -0.032, z]}>
-            <cylinderGeometry args={[0.004, 0.004, 0.215, 8]} />
-            <meshStandardMaterial color="#888" roughness={0.2} metalness={0.9} />
-          </mesh>
-        ))}
-      </group>
+    matMap.forEach((mat, name) => {
+      const configKey = MAT_TO_CONFIG[name as keyof typeof MAT_TO_CONFIG];
+      if (configKey && colorMap[configKey]) {
+        mat.color.set(colorMap[configKey]);
+        mat.needsUpdate = true;
+      }
+    });
+  }, [matMap, config, selectedColors, chainLinks]);
 
-      {/* Rear brake rotor */}
-      <mesh position={[-0.56, 0.36, 0.075]} rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.095, 0.007, 6, 28]} />
-        <meshStandardMaterial color={rotorColor} roughness={0.35} metalness={0.92} />
-      </mesh>
-
-      {/* Front brake rotor */}
-      <mesh position={[0.578, 0.36, 0.075]} rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.105, 0.007, 6, 30]} />
-        <meshStandardMaterial color={rotorColor} roughness={0.35} metalness={0.92} />
-      </mesh>
-
-      {/* Rear brake caliper */}
-      <mesh position={[-0.56, 0.46, 0.075]}>
-        <boxGeometry args={[0.025, 0.042, 0.028]} />
-        <meshStandardMaterial color="#222" roughness={0.3} metalness={0.7} />
-      </mesh>
-
-      {/* Front brake caliper */}
-      <mesh position={[0.575, 0.46, 0.075]}>
-        <boxGeometry args={[0.025, 0.042, 0.028]} />
-        <meshStandardMaterial color="#222" roughness={0.3} metalness={0.7} />
-      </mesh>
-
-      {/* Pedals */}
-      {[
-        { pos: [0.098, 0.250, -0.075] as [number, number, number] },
-        { pos: [-0.095, 0.470, 0.075] as [number, number, number] },
-      ].map(({ pos }, i) => (
-        <group key={i} position={pos}>
-          <mesh>
-            <boxGeometry args={[0.120, 0.016, 0.110]} />
-            <meshStandardMaterial color={pedalColor} roughness={0.55} metalness={0.5} />
-          </mesh>
-          {/* Pedal pins */}
-          {Array.from({ length: 4 }, (_, j) => (
-            Array.from({ length: 3 }, (_, k) => (
-              <mesh key={`${j}-${k}`} position={[
-                -0.045 + j * 0.030,
-                0.012,
-                -0.038 + k * 0.038,
-              ]}>
-                <cylinderGeometry args={[0.003, 0.003, 0.012, 6]} />
-                <meshStandardMaterial color="#888" roughness={0.3} metalness={0.9} />
-              </mesh>
-            ))
-          ))}
-        </group>
-      ))}
-    </group>
-  );
+  return <primitive object={clone} />;
 }
